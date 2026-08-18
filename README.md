@@ -10,6 +10,10 @@ Every command below is reproducible. The benchmark uses one identical harness (`
 ---
 
 ## TL;DR result
+<p align="center">
+  <img src="results/comparison.png" alt="vLLM vs SGLang throughput on DGX Spark" width="720">
+</p>
+
 
 Both engines measured with the same tool, same datasets, same concurrency, on matched GB10 hardware:
 
