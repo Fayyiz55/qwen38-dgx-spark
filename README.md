@@ -1,4 +1,4 @@
-# Qwen3.8-27B (NVFP4) on DGX Spark — vLLM vs SGLang
+# Qwen3.8-27B (NVFP4) on DGX Spark - vLLM vs SGLang
 
 Deploying and benchmarking **Qwen3.8-27B** in **NVFP4** on a single **NVIDIA DGX Spark (GB10, 128 GB unified LPDDR5X)** across two inference engines:
 
@@ -254,7 +254,7 @@ sudo journalctl -u sglang-qwen38 -f
 
 ---
 
-## 4. Benchmark — identical harness for both engines
+## 4. Benchmark - identical harness for both engines
 
 The benchmark client is `sglang.bench_serving`, run from the SGLang image. It is engine-agnostic (speaks the OpenAI API via `--backend sglang-oai`), so pointing the same tool at each server is what makes the comparison fair. The client needs no GPU — ignore its "NVIDIA Driver was not detected" warning.
 
