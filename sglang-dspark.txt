@@ -1,0 +1,67 @@
+Engine:   SGLang + DSpark (fully tuned: torch-compile, continuous-decode-steps=2, mem-fraction 0.50)
+Model:    RadixArk/Qwen3.8-27B-NVFP4  (+ RadixArk/Qwen3.8-27B-DSpark drafter)
+Hardware: DGX Spark (GB10), CUDA 13.2
+Port:     30000
+Harness:  sglang.bench_serving --backend sglang-oai  (--flush-cache before each run)
+Tokenizer: RadixArk/Qwen3.8-27B-NVFP4
+
+===================================================================
+>>> A) random 512/512, single-stream
+===================================================================
+============ Serving Benchmark Result ============
+Max request concurrency:                 1
+Successful requests:                     20
+Benchmark duration (s):                  385.94
+Total input tokens:                      10240
+Total generated tokens:                  10240
+Request throughput (req/s):              0.05
+Output token throughput (tok/s):         26.53
+Total token throughput (tok/s):          53.07
+Concurrency:                             1.00
+Accept length:                           2.78
+Mean E2E Latency (ms):                   19291.82
+Mean TTFT (ms):                          300.72
+Mean TPOT (ms):                          37.16
+Median TPOT (ms):                        41.09
+==================================================
+
+===================================================================
+>>> B) sharegpt, single-stream
+===================================================================
+============ Serving Benchmark Result ============
+Max request concurrency:                 1
+Successful requests:                     20
+Benchmark duration (s):                  258.77
+Total input tokens:                      8466
+Total generated tokens:                  5973
+Request throughput (req/s):              0.08
+Output token throughput (tok/s):         23.08
+Total token throughput (tok/s):          55.80
+Concurrency:                             1.00
+Accept length:                           2.47
+Mean E2E Latency (ms):                   12933.38
+Mean TTFT (ms):                          301.89
+Mean TPOT (ms):                          43.47
+Median TPOT (ms):                        42.48
+==================================================
+
+===================================================================
+>>> C) sharegpt, concurrent x4
+===================================================================
+============ Serving Benchmark Result ============
+Max request concurrency:                 4
+Successful requests:                     40
+Benchmark duration (s):                  162.41
+Total input tokens:                      20138
+Total generated tokens:                  9667
+Request throughput (req/s):              0.25
+Output token throughput (tok/s):         59.52
+Total token throughput (tok/s):          183.52
+Peak output token throughput (tok/s):    32.00
+Concurrency:                             3.69
+Accept length:                           2.30
+Mean E2E Latency (ms):                   14997.04
+Mean TTFT (ms):                          486.90
+Mean TPOT (ms):                          63.78
+Median TPOT (ms):                        64.05
+==================================================
