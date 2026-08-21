@@ -5,17 +5,35 @@ Deploying and benchmarking **Qwen3.8-27B** in **NVFP4** on a single **NVIDIA DGX
 - **vLLM** with **MTP** speculative decoding
 - **SGLang** with **DSpark** speculative decoding
 
-Every command below is reproducible. The benchmark uses one identical harness (`sglang.bench_serving`) against both engines so the comparison is fair. A field-notes section documents the GB10 unified-memory leak that will bite anyone running this setup, and how to survive it.
+Every command below is reproducible. A field-notes section documents the GB10 unified-memory leak that will bite anyone running this setup, and how to survive it.
+
+## Credits
+
+The SGLang + DSpark configuration, the tuning flags, and the `bench.sh` benchmark methodology come from **[hasso5703/dgx-spark-qwen38](https://github.com/hasso5703/dgx-spark-qwen38)** (and the accompanying [NVIDIA Developer Forums thread](https://forums.developer.nvidia.com/t/qwen3-8-27b-at-34-38-tok-s-on-dgx-spark-open-source-one-command-setup-sglang-nvfp4-dspark/380257)). That repo did the hard work of finding the fastest validated GB10 config; this repo reproduces it on separate hardware, adds a fair side-by-side against vLLM, and documents the operational pitfalls. All credit for the DSpark recipe and the "34–38 tok/s" result is theirs.
 
 ---
 
 ## TL;DR result
-<p align="center">
-  <img src="results/comparison.png" alt="vLLM vs SGLang throughput on DGX Spark" width="720">
-</p>
 
+**Throughput on this model is workload-dependent — a single number is misleading.** Speculative decoding (both MTP and DSpark) speeds you up in proportion to how predictably the *next* tokens can be guessed. Structured output (code, math, reasoning) accepts 3.3–5.6 draft tokens/step and runs fast; free-form prose accepts ~1.5–2.2 and runs slow. Always benchmark your actual traffic.
 
-Both engines measured with the same tool, same datasets, same concurrency, on matched GB10 hardware:
+### SGLang + DSpark, per workload (`bench.sh` methodology)
+
+![SGLang per-workload throughput](results/sglang_workloads.png)
+
+| Probe | This box | Reference box* |
+|---|---|---|
+| Reasoning (greedy) | 40–45 tok/s | 52–57 |
+| Math peak (temp 0.6) | 40–53 tok/s | 50–60 |
+| Code (greedy) | 37–42 tok/s | 41–47 |
+| Free prose (worst case, excluded from median) | 18–20 tok/s | ~23 |
+| **Greedy median** | **41.0 tok/s** | ~50 |
+
+\*Reference numbers from [hasso5703/dgx-spark-qwen38](https://github.com/hasso5703/dgx-spark-qwen38). Differences are within the boot-to-boot / driver / power-cap variance that repo documents ("the boot lottery"). This box: CUDA 13.2.
+
+### vLLM vs SGLang on the shared harness (`bench_serving`, general/prose regime)
+
+![vLLM vs SGLang throughput](results/comparison.png)
 
 | Workload | vLLM + MTP | SGLang + DSpark | Winner |
 |---|---|---|---|
@@ -26,9 +44,11 @@ Both engines measured with the same tool, same datasets, same concurrency, on ma
 | TPOT (single) | ~49 ms | ~37–43 ms | SGLang |
 | Max context served | 65,536 | 262,144 | SGLang |
 
-**Verdict:** SGLang + DSpark is ~30% faster single-stream with lower latency and 4x the context window. Under heavy concurrency the two converge to ~60 tok/s aggregate. Pick SGLang as primary; either is fine at scale.
+> These `bench_serving` runs use random tokens and diverse chat — the *general/prose* regime, which is the low end for both engines. The code/math numbers above (40–53) and these prose numbers (23–26) are the same engine on different content, not a contradiction.
 
-> Note: the two engines were run on two different (but matched) DGX Spark units with slightly different driver stacks (CUDA 13.2 vs 13.0). Part of the single-stream gap could be hardware/driver variance, but the margin is consistent enough to be mostly real.
+**Verdict:** SGLang + DSpark is the pick — ~40 tok/s median on code/math/reasoning, ~30% faster than vLLM single-stream on prose, lower latency, and 4× the context (262K vs 65K). Under heavy concurrency both converge to ~60 tok/s aggregate. vLLM remains a solid, simpler fallback.
+
+> Note: the two engines were benchmarked on two different (but matched) DGX Spark units with slightly different driver stacks (CUDA 13.2 vs 13.0). Part of the single-stream gap could be hardware/driver variance.
 
 ---
 
@@ -148,6 +168,7 @@ docker run -d --name sglang-qwen38 --gpus all \
   --attention-backend flashinfer \
   --enable-torch-compile --torch-compile-max-bs 4 \
   --num-continuous-decode-steps 2 \
+  --mamba-full-memory-ratio 8.26 \
   --chunked-prefill-size 8192 \
   --disable-prefill-cuda-graph \
   --reasoning-parser qwen3 \
@@ -172,6 +193,7 @@ First boot runs `torch.compile` (~9 min); later boots use the compile cache and 
 | `--speculative-algorithm DSPARK` | — | The trained block-drafter. Core of the speedup. |
 | `--enable-torch-compile` + `--torch-compile-max-bs 4` | — | **Required.** Without it, DSpark acceptance collapses (~1.7) and throughput tanks. |
 | `--num-continuous-decode-steps` | 2 | Cuts scheduler overhead per token. |
+| `--mamba-full-memory-ratio` | 8.26 | Tunes the hybrid Mamba state-cache memory. Part of the validated recipe; without it, code/math throughput is lower. |
 | `--mem-fraction-static` | **0.50** | **Safety-critical on GB10.** Higher values risk a host memory freeze (see field notes). |
 | `--disable-prefill-cuda-graph` | — | DGX-Spark-specific; avoids a known graph issue on GB10. |
 
@@ -220,6 +242,7 @@ ExecStart=/usr/bin/docker run --rm --name sglang-qwen38 --gpus all \
   --attention-backend flashinfer \
   --enable-torch-compile --torch-compile-max-bs 4 \
   --num-continuous-decode-steps 2 \
+  --mamba-full-memory-ratio 8.26 \
   --chunked-prefill-size 8192 \
   --disable-prefill-cuda-graph \
   --reasoning-parser qwen3 \
@@ -317,7 +340,7 @@ docker run --rm --network host lmsysorg/sglang:qwen38-27b \
 | Mean TTFT (ms) | 440 | 432 | 733 |
 | Mean TPOT (ms) | 49.3 | 53.5 | 57.6 |
 
-### SGLang + DSpark
+### SGLang + DSpark — bench_serving (general/prose regime)
 
 | Metric | Random 512 | ShareGPT single | ShareGPT x4 |
 |---|---|---|---|
@@ -327,12 +350,25 @@ docker run --rm --network host lmsysorg/sglang:qwen38-27b \
 | Mean TTFT (ms) | 301 | 302 | 487 |
 | Mean TPOT (ms) | 37.2 | 43.5 | 63.8 |
 
+### SGLang + DSpark — bench.sh (code/math/reasoning regime)
+
+Run with `./bench.sh` from [hasso5703/dgx-spark-qwen38](https://github.com/hasso5703/dgx-spark-qwen38) against the running server (two probes each, greedy unless noted):
+
+| Probe | Run 1 / Run 2 (tok/s) |
+|---|---|
+| Code (greedy) | 41.8 / 37.4 |
+| Reasoning (greedy) | 40.1 / 44.5 |
+| Math peak (temp 0.6) | 40.3 / 52.9 |
+| Free prose (worst case, excluded from median) | 19.6 / 18.0 |
+| **Greedy median** | **41.0** |
+
 ### Reading the numbers
 
-- **Single-stream throughput** is what most interactive/agent use feels. SGLang leads by ~28–33%.
-- **Accept length** (DSpark) hovers 2.3–2.8 on realistic text. It spikes to 4–6 on highly predictable output (e.g. step-by-step math) — which is why a single cherry-picked prompt can show a much bigger gap than a proper dataset. Always benchmark with real datasets, not one prompt.
+- **There is no single "the tok/s".** Same engine, same config: ~40–53 on code/math/reasoning, ~18–26 on free prose/chat. The difference is entirely **DSpark acceptance length** — how many draft tokens get accepted per step (3.3–5.6 for structured output, 1.5–2.2 for prose). This is inherent to speculative decoding, not a config problem.
+- **Which number to quote** depends on your traffic. Coding/agent/reasoning workloads → 40+. General chat → low-20s. Mixed → somewhere between.
+- **Two measurement harnesses, two purposes.** `bench_serving` (random + ShareGPT) is good for a fair, rigorous vLLM-vs-SGLang comparison on general text. `bench.sh` (code/math/reasoning probes, thinking-token-aware streaming) reproduces the published headline numbers. Both are valid; they measure different content.
 - **Concurrent** saturates memory bandwidth for both engines, so speculation matters less and they converge (~60 tok/s aggregate).
-- **A single curl-timed prompt is not a benchmark.** Early spot-checks in development suggested a ~3x gap; the rigorous harness showed it is really ~30%. Measure with `bench_serving` and real datasets.
+- **A single curl-timed prompt is not a benchmark.** Naive curl timing that only counts visible tokens (missing the thinking phase) inflates tok/s several-fold. Use `bench_serving` or `bench.sh`, which count reasoning tokens correctly.
 
 ---
 
@@ -419,6 +455,15 @@ sudo systemctl start vllm-qwen38
 # Flush prefix cache (SGLang) before a fresh benchmark
 curl -X POST http://localhost:30000/flush_cache
 ```
+
+---
+
+## Acknowledgments
+
+- **[hasso5703/dgx-spark-qwen38](https://github.com/hasso5703/dgx-spark-qwen38)** — the validated SGLang + NVFP4 + DSpark configuration, the tuning flags (`--mem-fraction-static 0.50`, `--enable-torch-compile`, `--num-continuous-decode-steps 2`, `--mamba-full-memory-ratio 8.26`), and the `bench.sh` benchmark methodology. The "34–38 tok/s" headline and the per-workload profile originate there. This repo reproduces their result on separate hardware and adds a vLLM comparison; the SGLang recipe is entirely their work.
+- **[NVIDIA DGX Spark / GB10 forum thread](https://forums.developer.nvidia.com/t/qwen3-8-27b-at-34-38-tok-s-on-dgx-spark-open-source-one-command-setup-sglang-nvfp4-dspark/380257)** — community discussion and cross-validation.
+- **[SGLang](https://github.com/sgl-project/sglang)** and **[vLLM](https://github.com/vllm-project/vllm)** — the inference engines.
+- Model weights: `RadixArk/Qwen3.8-27B-NVFP4`, `RadixArk/Qwen3.8-27B-DSpark`, `Inferact/Qwen3.8-27B-NVFP4` on Hugging Face.
 
 ---
 

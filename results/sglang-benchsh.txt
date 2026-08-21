@@ -1,0 +1,23 @@
+Engine:   SGLang + DSpark (fully tuned, incl. --mamba-full-memory-ratio 8.26)
+Model:    RadixArk/Qwen3.8-27B-NVFP4  (+ RadixArk/Qwen3.8-27B-DSpark drafter)
+Hardware: DGX Spark (GB10), CUDA 13.2
+Harness:  bench.sh from hasso5703/dgx-spark-qwen38
+          (greedy deterministic probes + one temp-0.6 math peak; thinking ON;
+           streaming counts reasoning_content tokens correctly)
+
+Qwen3.8-27B NVFP4+DSpark benchmark (batch 1 decode)
+reference box: ~50 greedy median (code 41-47 / reasoning 52-57 / math peak 50-60 / free prose ~23)
+
+  code (greedy, deterministic):                     41.8 / 37.4 tok/s
+  reasoning (greedy, deterministic):                40.1 / 44.5 tok/s
+  math peak (temp 0.6, like SGLang's eval setting): 40.3 / 52.9 tok/s
+  free prose (greedy, worst-case, excluded):        19.6 / 18.0 tok/s
+
+  greedy median: 41.0 tok/s
+
+Notes:
+  - accept length: math/code ~3.3-5.6 tokens/step, free prose ~1.5-2.2
+  - the "34-38" headline is the code/math number; free prose is the worst case
+  - numbers vary boot-to-boot ("the boot lottery") and drift under sustained
+    load (power-cap); treat deltas <15% as noise, re-baseline in-session
+  - reference numbers and methodology: hasso5703/dgx-spark-qwen38

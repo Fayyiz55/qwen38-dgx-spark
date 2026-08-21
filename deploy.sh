@@ -96,6 +96,7 @@ deploy_sglang() {
     --attention-backend flashinfer \
     --enable-torch-compile --torch-compile-max-bs 4 \
     --num-continuous-decode-steps 2 \
+    --mamba-full-memory-ratio 8.26 \
     --chunked-prefill-size 8192 \
     --disable-prefill-cuda-graph \
     --reasoning-parser qwen3 \
